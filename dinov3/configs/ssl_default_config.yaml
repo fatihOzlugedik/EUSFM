@@ -61,6 +61,14 @@ gram:
   global_teacher_resize_method: bicubic  # Method for resizing the outputs of the gram teacher
   global_teacher_resize_antialias: false  # Whether to use antialiasing when resizing the outputs of the gram teacher
   loss_weight_schedule: null  # (dict): If not None, use a schedule for the loss weight instead of `loss_weight`
+mae:
+  decoder_dim: 256        # decoder embedding dimension
+  decoder_depth: 4        # number of lightweight transformer blocks in decoder
+  decoder_num_heads: 8    # decoder attention heads
+  norm_target: true       # normalise pixel patches before MSE (MAE paper §3.1)
+barlow_twins:
+  proj_dim: 2048          # projection MLP output dimension
+  lambda_off_diag: 0.005  # weight for off-diagonal redundancy terms
 train:
   batch_size_per_gpu: 64
   dataset_path: ImageNet:split=TRAIN
@@ -170,6 +178,23 @@ crops:
   - 0.224
   - 0.225
   teacher_to_student_resolution_scale: 1.0
+  # EUS augmentation params (all defaults preserve existing behaviour)
+  min_content_mean: 0.0
+  max_crop_retries: 10
+  depth_attenuation_p: 0.0
+  depth_attenuation_alpha_min: 0.01
+  depth_attenuation_alpha_max: 0.05
+  gaussian_shadow_p: 0.0
+  gaussian_shadow_intensity_min: 0.3
+  gaussian_shadow_intensity_max: 0.8
+  gaussian_shadow_sigma_ratio: 0.15
+  color_jitter_brightness: 0.4
+  color_jitter_contrast: 0.4
+  color_jitter_saturation: 0.2
+  color_jitter_hue: 0.1
+  color_jitter_prob: 0.8
+  random_grayscale_prob: 0.2
+  solarize_prob: 0.2
 evaluation:
   eval_period_iterations: 12500
   low_freq_every: 5

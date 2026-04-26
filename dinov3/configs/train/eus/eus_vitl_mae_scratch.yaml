@@ -1,0 +1,28 @@
+# EUS MAE pretraining from scratch.
+# Masked Autoencoder with 50-75% random masking, pixel-space MSE loss.
+# Standard MAE crop scale [0.2, 1.0]. No colour jitter (pixels are the target).
+# Backbone and decoder trained jointly from random initialisation.
+MODEL:
+  META_ARCHITECTURE: MAEMetaArch
+train:
+  dataset_path: EUS:split=TRAIN:root=/data/eus
+  OFFICIAL_EPOCH_LENGTH: 3907
+student:
+  norm_layer: layernormbf16
+  n_storage_tokens: 4
+  mask_k_bias: true
+  pos_embed_rope_rescale_coords: 2
+ibot:
+  mask_sample_probability: 1.0
+  mask_ratio_min_max:
+  - 0.5
+  - 0.75
+crops:
+  global_crops_scale:
+  - 0.2
+  - 1.0
+  local_crops_number: 0
+  horizontal_flips: false
+optim:
+  lr: 0.00015
+  warmup_epochs: 40

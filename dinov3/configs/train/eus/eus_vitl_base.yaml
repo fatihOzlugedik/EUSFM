@@ -1,0 +1,31 @@
+# EUS Baseline: natural-image augmentations adapted for grayscale EUS frames.
+# Disables flips (anatomical orientation is fixed), raises crop scale floors to
+# avoid the black dead zone, zeros saturation/hue (meaningless for grayscale),
+# and disables solarize/grayscale (create physically impossible images for USG).
+# No physics augmentations. Use this config as the ablation anchor.
+train:
+  dataset_path: EUS:split=TRAIN:root=/data/eus
+  OFFICIAL_EPOCH_LENGTH: 3907  # ceil(1M frames / 256 global batch size) — 4 GPUs x 64 batch/GPU
+# Match the hub ViT-L architecture so the pretrained checkpoint loads exactly.
+# Run prepare_dinov3_checkpoint.py first, then set resume_from_teacher_chkpt.
+student:
+  norm_layer: layernormbf16
+  n_storage_tokens: 4
+  mask_k_bias: true
+  pos_embed_rope_rescale_coords: 2
+  resume_from_teacher_chkpt: ""  # set to output of prepare_dinov3_checkpoint.py
+crops:
+  global_crops_scale:
+  - 0.5
+  - 1.0
+  local_crops_scale:
+  - 0.1
+  - 0.5
+  horizontal_flips: false
+  color_jitter_brightness: 0.2
+  color_jitter_contrast: 0.2
+  color_jitter_saturation: 0.0
+  color_jitter_hue: 0.0
+  color_jitter_prob: 0.8
+  random_grayscale_prob: 0.0
+  solarize_prob: 0.0

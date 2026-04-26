@@ -758,6 +758,22 @@ class SSLMetaArch(nn.Module):
             horizontal_flips=cfg.crops.horizontal_flips,
             mean=cfg.crops.rgb_mean,
             std=cfg.crops.rgb_std,
+            min_content_mean=cfg.crops.min_content_mean,
+            max_crop_retries=cfg.crops.max_crop_retries,
+            depth_attenuation_p=cfg.crops.depth_attenuation_p,
+            depth_attenuation_alpha_min=cfg.crops.depth_attenuation_alpha_min,
+            depth_attenuation_alpha_max=cfg.crops.depth_attenuation_alpha_max,
+            gaussian_shadow_p=cfg.crops.gaussian_shadow_p,
+            gaussian_shadow_intensity_min=cfg.crops.gaussian_shadow_intensity_min,
+            gaussian_shadow_intensity_max=cfg.crops.gaussian_shadow_intensity_max,
+            gaussian_shadow_sigma_ratio=cfg.crops.gaussian_shadow_sigma_ratio,
+            color_jitter_brightness=cfg.crops.color_jitter_brightness,
+            color_jitter_contrast=cfg.crops.color_jitter_contrast,
+            color_jitter_saturation=cfg.crops.color_jitter_saturation,
+            color_jitter_hue=cfg.crops.color_jitter_hue,
+            color_jitter_prob=cfg.crops.color_jitter_prob,
+            random_grayscale_prob=cfg.crops.random_grayscale_prob,
+            solarize_prob=cfg.crops.solarize_prob,
         )
 
     def get_maybe_fused_params_for_submodel(self, m: nn.Module):

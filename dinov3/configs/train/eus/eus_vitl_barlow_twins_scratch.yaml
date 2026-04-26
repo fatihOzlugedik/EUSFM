@@ -1,0 +1,25 @@
+# EUS Barlow Twins pretraining from scratch.
+# Two-view cross-correlation redundancy-reduction loss, no masking.
+# Backbone + 3-layer projector (LayerNorm, FSDP-safe) trained from random init.
+MODEL:
+  META_ARCHITECTURE: BarlowTwinsMetaArch
+train:
+  dataset_path: EUS:split=TRAIN:root=/data/eus
+  OFFICIAL_EPOCH_LENGTH: 3907
+student:
+  norm_layer: layernormbf16
+  n_storage_tokens: 4
+  mask_k_bias: true
+  pos_embed_rope_rescale_coords: 2
+ibot:
+  mask_sample_probability: 0.0  # BarlowTwins does not use masking
+crops:
+  local_crops_number: 0
+  horizontal_flips: false
+  color_jitter_saturation: 0.0
+  color_jitter_hue: 0.0
+  random_grayscale_prob: 0.0
+  solarize_prob: 0.0
+optim:
+  lr: 0.0002
+  warmup_epochs: 10

@@ -10,7 +10,15 @@ import torch
 from torch import nn
 from torchvision.transforms import v2
 
-from dinov3.data.transforms import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD, GaussianBlur, make_normalize_transform
+from dinov3.data.transforms import (
+    IMAGENET_DEFAULT_MEAN,
+    IMAGENET_DEFAULT_STD,
+    ContentAwareRandomResizedCrop,
+    DepthAttenuation,
+    GaussianBlur,
+    GaussianShadow,
+    make_normalize_transform,
+)
 
 logger = logging.getLogger("dinov3")
 
@@ -32,6 +40,23 @@ class DataAugmentationDINO(object):
         horizontal_flips=True,
         mean=IMAGENET_DEFAULT_MEAN,
         std=IMAGENET_DEFAULT_STD,
+        # EUS augmentation parameters (all disabled/at-default by default)
+        min_content_mean: float = 0.0,
+        max_crop_retries: int = 10,
+        depth_attenuation_p: float = 0.0,
+        depth_attenuation_alpha_min: float = 0.01,
+        depth_attenuation_alpha_max: float = 0.05,
+        gaussian_shadow_p: float = 0.0,
+        gaussian_shadow_intensity_min: float = 0.3,
+        gaussian_shadow_intensity_max: float = 0.8,
+        gaussian_shadow_sigma_ratio: float = 0.15,
+        color_jitter_brightness: float = 0.4,
+        color_jitter_contrast: float = 0.4,
+        color_jitter_saturation: float = 0.2,
+        color_jitter_hue: float = 0.1,
+        color_jitter_prob: float = 0.8,
+        random_grayscale_prob: float = 0.2,
+        solarize_prob: float = 0.2,
     ):
         self.global_crops_scale = global_crops_scale
         self.local_crops_scale = local_crops_scale
@@ -61,6 +86,17 @@ class DataAugmentationDINO(object):
         logger.info(f"patch_size if local_crops_subset_of_global_crops: {patch_size}")
         logger.info(f"share_color_jitter: {share_color_jitter}")
         logger.info(f"horizontal flips: {horizontal_flips}")
+        logger.info(f"min_content_mean: {min_content_mean}")
+        logger.info(f"max_crop_retries: {max_crop_retries}")
+        logger.info(f"depth_attenuation_p: {depth_attenuation_p}")
+        logger.info(f"gaussian_shadow_p: {gaussian_shadow_p}")
+        logger.info(f"color_jitter_brightness: {color_jitter_brightness}")
+        logger.info(f"color_jitter_contrast: {color_jitter_contrast}")
+        logger.info(f"color_jitter_saturation: {color_jitter_saturation}")
+        logger.info(f"color_jitter_hue: {color_jitter_hue}")
+        logger.info(f"color_jitter_prob: {color_jitter_prob}")
+        logger.info(f"random_grayscale_prob: {random_grayscale_prob}")
+        logger.info(f"solarize_prob: {solarize_prob}")
         logger.info("###################################")
 
         # Global crops and gram teacher crops can have different sizes. We first take a crop of the maximum size
@@ -70,10 +106,12 @@ class DataAugmentationDINO(object):
         # random resized crop and flip
         self.geometric_augmentation_global = v2.Compose(
             [
-                v2.RandomResizedCrop(
+                ContentAwareRandomResizedCrop(
                     global_crop_max_size,
                     scale=global_crops_scale,
                     interpolation=v2.InterpolationMode.BICUBIC,
+                    min_content_mean=min_content_mean,
+                    max_retries=max_crop_retries,
                 ),
                 v2.RandomHorizontalFlip(p=0.5 if horizontal_flips else 0.0),
             ]
@@ -109,23 +147,63 @@ class DataAugmentationDINO(object):
 
         self.geometric_augmentation_local = v2.Compose(
             [
-                v2.RandomResizedCrop(
+                ContentAwareRandomResizedCrop(
                     local_crops_size,
                     scale=local_crops_scale,
                     interpolation=v2.InterpolationMode.BICUBIC,
+                    min_content_mean=min_content_mean,
+                    max_retries=max_crop_retries,
                 ),
                 v2.RandomHorizontalFlip(p=0.5 if horizontal_flips else 0.0),
             ]
         )
 
+        # EUS physics augmentations (applied after geometric crop, before color jitter)
+        physics_augs = []
+        if depth_attenuation_p > 0.0:
+            physics_augs.append(
+                DepthAttenuation(
+                    p=depth_attenuation_p,
+                    alpha_min=depth_attenuation_alpha_min,
+                    alpha_max=depth_attenuation_alpha_max,
+                )
+            )
+        if gaussian_shadow_p > 0.0:
+            physics_augs.append(
+                GaussianShadow(
+                    p=gaussian_shadow_p,
+                    intensity_min=gaussian_shadow_intensity_min,
+                    intensity_max=gaussian_shadow_intensity_max,
+                    sigma_ratio=gaussian_shadow_sigma_ratio,
+                )
+            )
+        self.physics_augmentation = v2.Compose(physics_augs) if physics_augs else nn.Identity()
+
+        # Append physics augs to the geometric pipelines so they run immediately after
+        # the crop+flip and before color jitter, without modifying __call__.
+        if physics_augs:
+            self.geometric_augmentation_global = v2.Compose(
+                list(self.geometric_augmentation_global.transforms) + [self.physics_augmentation]
+            )
+            self.geometric_augmentation_local = v2.Compose(
+                list(self.geometric_augmentation_local.transforms) + [self.physics_augmentation]
+            )
+
         # color distortions / blurring
         color_jittering = v2.Compose(
             [
                 v2.RandomApply(
-                    [v2.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.2, hue=0.1)],
-                    p=0.8,
+                    [
+                        v2.ColorJitter(
+                            brightness=color_jitter_brightness,
+                            contrast=color_jitter_contrast,
+                            saturation=color_jitter_saturation,
+                            hue=color_jitter_hue,
+                        )
+                    ],
+                    p=color_jitter_prob,
                 ),
-                v2.RandomGrayscale(p=0.2),
+                v2.RandomGrayscale(p=random_grayscale_prob),
             ]
         )
 
@@ -134,7 +212,7 @@ class DataAugmentationDINO(object):
         global_transfo2_extra = v2.Compose(
             [
                 GaussianBlur(p=0.1),
-                v2.RandomSolarize(threshold=128, p=0.2),
+                v2.RandomSolarize(threshold=128, p=solarize_prob),
             ]
         )
 

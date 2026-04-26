@@ -1,0 +1,30 @@
+# EUS ablation: content-aware crop only.
+# Adds brightness-gated crop retry on top of the EUS baseline.
+# Crops with mean pixel intensity below min_content_mean (in [0,1] scale)
+# are discarded and resampled, avoiding the black acoustic-cone dead zone.
+train:
+  dataset_path: EUS:split=TRAIN:root=/data/eus
+  OFFICIAL_EPOCH_LENGTH: 3907
+student:
+  norm_layer: layernormbf16
+  n_storage_tokens: 4
+  mask_k_bias: true
+  pos_embed_rope_rescale_coords: 2
+  resume_from_teacher_chkpt: ""  # set to output of prepare_dinov3_checkpoint.py
+crops:
+  global_crops_scale:
+  - 0.5
+  - 1.0
+  local_crops_scale:
+  - 0.1
+  - 0.5
+  horizontal_flips: false
+  color_jitter_brightness: 0.2
+  color_jitter_contrast: 0.2
+  color_jitter_saturation: 0.0
+  color_jitter_hue: 0.0
+  color_jitter_prob: 0.8
+  random_grayscale_prob: 0.0
+  solarize_prob: 0.0
+  min_content_mean: 0.05
+  max_crop_retries: 10

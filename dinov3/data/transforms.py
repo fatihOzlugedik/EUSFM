@@ -6,7 +6,9 @@
 import logging
 from typing import Sequence
 
+import numpy as np
 import torch
+from PIL import Image
 from torchvision.transforms import v2
 
 logger = logging.getLogger("dinov3")
@@ -26,6 +28,149 @@ class GaussianBlur(v2.RandomApply):
         keep_p = 1 - p
         transform = v2.GaussianBlur(kernel_size=9, sigma=(radius_min, radius_max))
         super().__init__(transforms=[transform], p=keep_p)
+
+
+class ContentAwareRandomResizedCrop(v2.RandomResizedCrop):
+    """
+    RandomResizedCrop that retries if the cropped region is too dark.
+    Designed for images with large dead zones (e.g. endoscopic ultrasound fan shape).
+    When min_content_mean == 0.0 the check is skipped and behaviour is
+    identical to v2.RandomResizedCrop (safe default, zero overhead).
+    """
+
+    def __init__(self, *args, min_content_mean: float = 0.0, max_retries: int = 10, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.min_content_mean = min_content_mean
+        self.max_retries = max_retries
+
+    def forward(self, img):
+        if self.min_content_mean <= 0.0:
+            return super().forward(img)
+        candidate = super().forward(img)
+        for _ in range(self.max_retries - 1):
+            if self._mean_intensity(candidate) >= self.min_content_mean:
+                return candidate
+            candidate = super().forward(img)
+        # Exhausted retries — return last candidate regardless
+        return candidate
+
+    @staticmethod
+    def _mean_intensity(img) -> float:
+        if isinstance(img, Image.Image):
+            return np.asarray(img, dtype=np.float32).mean() / 255.0
+        # Tensor: normalise uint8 to [0, 1] if needed
+        t = img.float()
+        if t.max() > 1.0:
+            t = t / 255.0
+        return t.mean().item()
+
+
+class _DepthAttenuationImpl(torch.nn.Module):
+    """
+    Acoustic depth-attenuation: I(r,c) = I_orig(r,c) * exp(-alpha * r / H).
+    alpha is sampled uniformly from [alpha_min, alpha_max] each call.
+    Operates on PIL Images; passes other types through unchanged.
+    """
+
+    def __init__(self, alpha_min: float = 0.01, alpha_max: float = 0.05):
+        super().__init__()
+        self.alpha_min = alpha_min
+        self.alpha_max = alpha_max
+
+    def forward(self, img):
+        if not isinstance(img, Image.Image):
+            return img
+        alpha = float(np.random.uniform(self.alpha_min, self.alpha_max))
+        arr = np.asarray(img, dtype=np.float32)   # (H, W) or (H, W, C)
+        H = arr.shape[0]
+        rows = np.arange(H, dtype=np.float32)
+        decay = np.exp(-alpha * rows / H)          # shape (H,)
+        if arr.ndim == 3:
+            decay = decay[:, np.newaxis, np.newaxis]
+        else:
+            decay = decay[:, np.newaxis]
+        result = np.clip(arr * decay, 0, 255).astype(np.uint8)
+        return Image.fromarray(result, mode=img.mode)
+
+
+class DepthAttenuation(v2.RandomApply):
+    """
+    Randomly applies acoustic depth-attenuation to PIL Images.
+    Simulates exponential signal loss with tissue depth in ultrasound.
+    p=0.0 (default) means never applied, preserving existing behaviour.
+    """
+
+    def __init__(
+        self,
+        *,
+        p: float = 0.0,
+        alpha_min: float = 0.01,
+        alpha_max: float = 0.05,
+    ):
+        transform = _DepthAttenuationImpl(alpha_min=alpha_min, alpha_max=alpha_max)
+        super().__init__(transforms=[transform], p=p)
+
+
+class _GaussianShadowImpl(torch.nn.Module):
+    """
+    Acoustic shadow dropout: I(r,c) = I_orig(r,c) * (1 - strength * G(r,c)).
+    G is a 2-D Gaussian centred at a random (cx, cy), sigma = sigma_ratio * min(H, W).
+    strength ~ U[intensity_min, intensity_max].
+    Operates on PIL Images; passes other types through unchanged.
+    """
+
+    def __init__(
+        self,
+        intensity_min: float = 0.3,
+        intensity_max: float = 0.8,
+        sigma_ratio: float = 0.15,
+    ):
+        super().__init__()
+        self.intensity_min = intensity_min
+        self.intensity_max = intensity_max
+        self.sigma_ratio = sigma_ratio
+
+    def forward(self, img):
+        if not isinstance(img, Image.Image):
+            return img
+        arr = np.asarray(img, dtype=np.float32)   # (H, W) or (H, W, C)
+        H, W = arr.shape[:2]
+        sigma = self.sigma_ratio * min(H, W)
+        cx = float(np.random.uniform(0, W))
+        cy = float(np.random.uniform(0, H))
+        strength = float(np.random.uniform(self.intensity_min, self.intensity_max))
+        xs = np.arange(W, dtype=np.float32)
+        ys = np.arange(H, dtype=np.float32)
+        xx, yy = np.meshgrid(xs, ys)              # (H, W)
+        G = np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2.0 * sigma ** 2))
+        shadow = 1.0 - strength * G               # (H, W)
+        if arr.ndim == 3:
+            shadow = shadow[:, :, np.newaxis]
+        result = np.clip(arr * shadow, 0, 255).astype(np.uint8)
+        return Image.fromarray(result, mode=img.mode)
+
+
+class GaussianShadow(v2.RandomApply):
+    """
+    Randomly applies a Gaussian acoustic-shadow mask to PIL Images.
+    Simulates signal dropout from ribs or calcified structures in ultrasound.
+    p=0.0 (default) means never applied, preserving existing behaviour.
+    """
+
+    def __init__(
+        self,
+        *,
+        p: float = 0.0,
+        intensity_min: float = 0.3,
+        intensity_max: float = 0.8,
+        sigma_ratio: float = 0.15,
+    ):
+        transform = _GaussianShadowImpl(
+            intensity_min=intensity_min,
+            intensity_max=intensity_max,
+            sigma_ratio=sigma_ratio,
+        )
+        super().__init__(transforms=[transform], p=p)
 
 
 # Use timm's names
